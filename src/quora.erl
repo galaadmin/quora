@@ -1,4 +1,7 @@
 %% Author: eschneef
+%% added to gitHub Nov, 21, 2011
+%% SVC: now in a gitHub repository
+%%
 %% Created: Nov 14, 2011
 %% Description: quora challenge
 -module(quora).
