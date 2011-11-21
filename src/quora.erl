@@ -8,7 +8,7 @@
 %%
 %% Exported Functions
 %%
--export([start/1, go/0, find_neighbors/4, get_key/2]).
+-export([start/1, go/0, find_neighbors/5, get_key/2]).
 
 %%
 %% API Functions
@@ -71,7 +71,7 @@ build_map(W, H) ->
 			NextW > 0, NextW =< MaxW,
 			NextH > 0, NextH =< MaxH
 		   ],
-	io:fwrite("&& ~w ~w && ~p~n", [W, H, List]),
+	%% io:fwrite("&& ~w ~w && ~p~n", [W, H, List]),
 	ets:insert(rooms, {{map, W, H}, 
 					   lists:map(
 						 fun({X, Y}) -> {X, Y, (X - 1) + (Y - 1) * MaxW} end,
@@ -80,10 +80,11 @@ build_map(W, H) ->
 run_ducts(Bin) ->
 	%% find the start
 	[[StartW, StartH]] = ets:match(rooms, { start, {'$1', '$2'}}),
+	[{_, MaxW}] = ets:lookup(rooms, w),
 	%% io:fwrite("starting at ~B ~B : ~B ~B~n", [StartW, StartH, MaxW, MaxH]),
 	register(collector, spawn(fun() -> collect(0, [], 0) end)),
 	register(top, self()),
-	spawn(fun() -> find_neighbors([{StartW, StartH}], 1, Bin, push) end),
+	spawn(fun() -> find_neighbors([{StartW, StartH}], MaxW, 1, Bin, push) end),
 	receive
 		stop ->
 			io:fwrite("clean stop~n", []),
@@ -100,11 +101,11 @@ find_neighbors(From = [{W, H}|_Tail], N, Bin, Action) ->
 		push -> collector ! {start, top, N};
 		_ -> skip
 	end,
-	{NewBin, Key} = get_offsets(W, H, Bin),
-	io:fwrite("Key ~w~n", [Key]),
+	{NewBin, Key} = get_offsets(W, H, MaxW, Bin),
+	%% io:fwrite("Key ~w~n", [Key]),
 	case Key of
 		3 ->
-			io:fwrite("found end ~B ~p~n", [N, From]),
+			io:fwrite("found end ~B ~B ~p~n", [N, length(From), From]),
 			collector ! {good, top, N + 1};
 		_ ->
 			List = get_next_rooms(W, H, Bin),
@@ -113,30 +114,36 @@ find_neighbors(From = [{W, H}|_Tail], N, Bin, Action) ->
 				[] ->
 					collector ! {bad, top, N};
 				[{W1, H1}] ->
-					find_neighbors([{W1, H1}|From], N + 1, NewBin, skip);
+					find_neighbors([{W1, H1}|From], MaxW, N + 1, NewBin, skip);
 				_ ->
-					spinoff(List, From, NewBin, N + 1),
+					spinoff(List, From, MaxW, NewBin, N + 1),
 					collector ! {done, top, N}
 			end				
 	end.
 
 get_next_rooms(W, H, Bin) ->
-	io:fwrite("** ~w ~w  ~w~n", [W, H, ets:lookup(rooms, {map, W, H})]),
-	[{_, List}] = ets:lookup(rooms, {map, W, H}),
-	[{X, Y} || {X, Y, Z} <- List, check_cell(Z, Bin)].
+	io:fwrite("** ~w ~w <<~w>>~n", [W, H, ets:lookup(rooms, {map, W, H})]),
+	case ets:lookup(rooms, {map, W, H}) of
+		[{{map, W, H}, List}] ->
+			[{X, Y} || {X, Y, Z} <- List, check_cell(Z, Bin)];
+		_ ->
+			io:fwrite("Bad lookup ~w ~w~n", [W, H]),
+			[]
+	end.
 
 check_cell(Offset, Bin) ->
 	<<_:Offset/unit:16, Key:4, _:12, _/bitstring>> = Bin,
 	case Key of
 		1 -> false;
+		3 -> true;
 		0 -> true
 	end.
 	
-spinoff([], _, _, _) ->
+spinoff([], _, _, _, _) ->
 	done;
-spinoff([H|T], From, Bin, N) ->
-	spawn(fun() -> find_neighbors([H|From], N + 1, Bin, push) end),
-	spinoff(T, From, Bin, N + 1).
+spinoff([H|T], From, MaxW, Bin, N) ->
+	spawn(fun() -> find_neighbors([H|From], MaxW, N + 1, Bin, push) end),
+	spinoff(T, From, MaxW, Bin, N + 1).
 
 get_key(X, Y) ->
 	%% io:fwrite("in get_key at ~w ~w~n", [X, Y]),
@@ -145,16 +152,15 @@ get_key(X, Y) ->
 		_ -> 1
 	end.
 
-get_offsets(W, H, Bin) ->
-	io:fwrite("in get_offsets~n", []),
-	[{_, MaxW}] = ets:lookup(rooms, w),
+get_offsets(W, H, MaxW, Bin) ->
+	%% io:fwrite("in get_offsets~n", []),
 	case ((W - 1) + (H - 1) * MaxW) of
 		0 ->
 			<<Key:4, Order:12, Tail/binary>> = Bin,
-			{<<1, (Order + 1), Tail/binary>>, Key};
+			{<<1:4, (Order + 1):12, Tail/binary>>, Key};
 		Offset ->
 			<<Head:Offset/unit:16, Key:4, Order:12, Tail/binary>> = Bin,
-			{<<Head, 1, (Order + 1), Tail/binary>>, Key}
+			{<<Head:Offset/unit:16, 1:4, (Order + 1):12, Tail/binary>>, Key}
 	end.
 
 collect(0, _, Found) when Found > 0 ->
