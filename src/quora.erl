@@ -23,6 +23,7 @@ start([Filename]) ->
 			{W, H} = read_header(Fid),
 			ets:insert(rooms, {w, W}),
 			ets:insert(rooms, {h, H}),
+			ets:insert(rooms, {count, W * H }),
 			Bin = read_rooms(Fid, 1, <<>>),
 			run_ducts(Bin),
 			ets:delete(rooms);
@@ -53,16 +54,18 @@ create_room(_, _, [], Bin) ->
 	Bin;
 create_room(W, H, [Head|Tail], Bin) ->
 	Key = list_to_integer(Head),
+	Count = ets:lookup_element(rooms, count, 2),
 	case Key of
 		2 -> ets:insert(rooms, {start, {W, H}});
+		1 -> ets:insert(rooms, {count, Count - 1});
 		_ -> skip
 	end,
 	build_map(W, H),
 	create_room(W + 1, H, Tail, <<Bin/binary, Key:4, 0:12>>).
 
 build_map(W, H) ->
-	[{_, MaxW}] = ets:lookup(rooms, w),
-	[{_, MaxH}] = ets:lookup(rooms, h),
+	MaxW = ets:lookup_element(rooms, w, 2),
+	MaxH = ets:lookup_element(rooms, h, 2),
 	List = [{NextW, NextH} ||
 			NextW <- [W-1, W, W+1],
 			NextH <- [H-1, H, H+1],
@@ -95,8 +98,8 @@ run_ducts(Bin) ->
 	end.
 %% init:stop().
 
-find_neighbors(From = [{W, H}|_Tail], N, Bin, Action) ->
-	io:fwrite("level ~B <~B ~B>~n", [N, W, H]),
+find_neighbors(From = [{W, H}|_Tail], MaxW, N, Bin, Action) ->
+	%% io:fwrite("level ~B <~B ~B>~n", [N, W, H]),
 	case Action of
 		push -> collector ! {start, top, N};
 		_ -> skip
@@ -105,11 +108,16 @@ find_neighbors(From = [{W, H}|_Tail], N, Bin, Action) ->
 	%% io:fwrite("Key ~w~n", [Key]),
 	case Key of
 		3 ->
-			io:fwrite("found end ~B ~B ~p~n", [N, length(From), From]),
-			collector ! {good, top, N + 1};
+			case ets:lookup_element(rooms, count, 2) of
+				Count when Count == length(From) ->
+					io:fwrite("found end ~B ~B ~B ~p~n", [N, length(From), Count, From]),
+					collector ! {good, top, N + 1};
+				Count ->
+					collector ! {short, top, N + 1}
+			end;	
 		_ ->
 			List = get_next_rooms(W, H, Bin),
-			io:fwrite("List is ~p~n", [List]),
+			%% io:fwrite("List is ~p~n", [List]),
 			case List of
 				[] ->
 					collector ! {bad, top, N};
@@ -138,7 +146,7 @@ check_cell(Offset, Bin) ->
 		3 -> true;
 		0 -> true
 	end.
-	
+
 spinoff([], _, _, _, _) ->
 	done;
 spinoff([H|T], From, MaxW, Bin, N) ->
@@ -149,7 +157,9 @@ get_key(X, Y) ->
 	%% io:fwrite("in get_key at ~w ~w~n", [X, Y]),
 	case ets:lookup(rooms, {room, X, Y}) of
 		[{_, Key}] -> Key;
-		_ -> 1
+		_ ->
+			io:fwrite("key lookup failed at ~B ~B~n", [X, Y]),
+			-1
 	end.
 
 get_offsets(W, H, MaxW, Bin) ->
