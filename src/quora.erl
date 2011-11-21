@@ -1,6 +1,6 @@
 %% Author: eschneef
 %% Created: Nov 14, 2011
-%% Description: TODO: Add description to quora
+%% Description: quora challenge
 -module(quora).
 
 -define(TIMEOUT, 5000).
@@ -104,6 +104,7 @@ find_neighbors(From = [{W, H}|_Tail], N, Bin, Action) ->
 	io:fwrite("Key ~w~n", [Key]),
 	case Key of
 		3 ->
+			io:fwrite("found end ~B ~p~n", [N, From]),
 			collector ! {good, top, N + 1};
 		_ ->
 			List = get_next_rooms(W, H, Bin),
@@ -120,9 +121,17 @@ find_neighbors(From = [{W, H}|_Tail], N, Bin, Action) ->
 	end.
 
 get_next_rooms(W, H, Bin) ->
-	io:fwrite("** ~w ~w  ~w~n", [W, H, ets:match(rooms, {{map, W, H}, '$1'})]),
-	[].
+	io:fwrite("** ~w ~w  ~w~n", [W, H, ets:lookup(rooms, {map, W, H})]),
+	[{_, List}] = ets:lookup(rooms, {map, W, H}),
+	[{X, Y} || {X, Y, Z} <- List, check_cell(Z, Bin)].
 
+check_cell(Offset, Bin) ->
+	<<_:Offset/unit:16, Key:4, _:12, _/bitstring>> = Bin,
+	case Key of
+		1 -> false;
+		0 -> true
+	end.
+	
 spinoff([], _, _, _) ->
 	done;
 spinoff([H|T], From, Bin, N) ->
